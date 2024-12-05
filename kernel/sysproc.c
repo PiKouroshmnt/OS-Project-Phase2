@@ -121,3 +121,25 @@ report_traps(void)
     copyout(p->pagetable,(uint64)rprt,(char *)&krprt, sizeof(krprt));
     return err;
 }
+
+uint64
+sys_create_thread(void)
+{
+    //body
+    return 0; //this line must change as well
+}
+
+uint64
+sys_join_thread(void)
+{
+    //body
+    return 0; //might change this as well
+}
+
+uint64
+sys_stop_thread(void)
+{
+    //body
+    return 0; //might change this as well
+}
+

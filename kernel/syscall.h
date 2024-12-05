@@ -22,3 +22,6 @@
 #define SYS_close  21
 #define SYS_children 22
 #define SYS_report 23
+#define SYS_create_thread 24
+#define SYS_join_thread 25
+#define SYS_stop_thread 26

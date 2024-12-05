@@ -38,3 +38,6 @@ entry("sleep");
 entry("uptime");
 entry("children");
 entry("report");
+entry("create_thread");
+entry("join_thread");
+entry("stop_thread");
