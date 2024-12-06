@@ -128,10 +128,8 @@ sys_create_thread(void)
     void (*func)(void *);
     void *arg;
 
-    if (argint(0, (int *)&func) < 0 || argint(1, (int*)&arg) < 0){
-        panic("args failed");
-        return -1;
-    }
+    argint(0,(int *)&func);
+    argint(1,(int *)&arg);
 
     return thread_create(func,arg);
 }

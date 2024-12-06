@@ -120,6 +120,7 @@ struct proc {
   //threads
   struct thread threads[MAX_THREAD];
   struct thread *current_thread;
+  int last_scheduled_index;
 };
 
 struct proc_info {

@@ -55,6 +55,7 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->state = UNUSED;
       p->current_thread = 0;
+      p->last_scheduled_index = 0;
       for(int i = 0;i < MAX_THREAD;i++) {
           p->threads[i].state = THREAD_FREE;
       }
@@ -451,6 +452,8 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct thread *t = 0;
+  int flag = 0;
   struct cpu *c = mycpu();
 
   c->proc = 0;
@@ -469,7 +472,46 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        if(p->current_thread != 0) {
+            if(p->current_thread->state == THREAD_RUNNABLE) {
+                t = p->current_thread;
+            } else {
+                for(int i = 0; i < MAX_THREAD;i++) {
+                    int index = (p->last_scheduled_index + i) % MAX_THREAD;
+                    t = &p->threads[index];
+                    if (t->state == THREAD_RUNNABLE) {
+                        p->current_thread = t;
+                        p->last_scheduled_index = index;
+                        break;
+                    }
+                }
+            }
+            if(t && t->state == THREAD_RUNNABLE) {
+                t->state = THREAD_RUNNING;
+            }else {
+                panic("this shouldn't happen but just in case");
+            }
+
+            /*
+             * trapframe of thread needs to be saved before context switch. not sure if this is the way to do it
+             */
+
+            memmove(p->trapframe,t->trapframe,sizeof (struct trapframe));
+
+        }
+
         swtch(&c->context, &p->context);
+
+        if(t){
+            /*
+             * might need to unload thread trapframe. for now I'll keep it empty
+             */
+            t = 0;
+        }
+        if(p->state == TEXIT) {
+            flag = 1;
+            p->state = RUNNABLE;
+        }
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
@@ -477,6 +519,10 @@ scheduler(void)
         found = 1;
       }
       release(&p->lock);
+      if(flag) {
+          p--;
+          flag = 0;
+      }
     }
     if(found == 0) {
       // nothing to run; stop running on this core until an interrupt.
@@ -503,7 +549,7 @@ sched(void)
     panic("sched p->lock");
   if(mycpu()->noff != 1)
     panic("sched locks");
-  if(p->state == RUNNING)
+  if(p->state == RUNNING || (p->current_thread && p->current_thread->state == THREAD_RUNNING))
     panic("sched running");
   if(intr_get())
     panic("sched interruptible");
@@ -520,6 +566,9 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  if(p->current_thread && p->current_thread->state == THREAD_RUNNING) {
+      p->current_thread->state = THREAD_RUNNABLE;
+  }
   sched();
   release(&p->lock);
 }
@@ -762,7 +811,11 @@ thread_exit(void) {
 
     acquire(&p->lock);
 
-    t->state = T_JOINED;
+    //might change this as well later not sure if this is how to do it
+    //save return val into process trapframe:
+    p->trapframe->a0 = t->trapframe->a0;
+
+    t->state = THREAD_JOINED;
 
     if (t->trapframe) {
         uvmdealloc(p->pagetable, (uint64)t->trapframe->sp, (uint64)(t->trapframe->sp - STACKSIZE));
@@ -771,8 +824,8 @@ thread_exit(void) {
     }
 
     int threads_active = 0;
-    for (int i = 0; i < MAX_THREADS; i++) {
-        if (p->threads[i].state != T_FREE && p->threads[i].state != T_JOINED) {
+    for (int i = 0; i < MAX_THREAD; i++) {
+        if (p->threads[i].state != THREAD_FREE && p->threads[i].state != THREAD_JOINED) {
             threads_active = 1;
             break;
         }
@@ -792,7 +845,7 @@ thread_create(void (*func)(void *) , void *arg)
 {
     struct thread *t = 0;
     struct proc *p = myproc();
-    uint64 *stack_top;
+    uint64 stack_top;
     uint nexttid = 0;
 
     if (p->current_thread == 0) {
@@ -809,7 +862,7 @@ thread_create(void (*func)(void *) , void *arg)
         }
 
         memmove(main_thread->trapframe, p->trapframe, sizeof(struct trapframe));
-        main_thread->tf->sp = p->trapframe->sp;
+        main_thread->trapframe->sp = p->trapframe->sp;
     }
 
     for(int i = 0 ;i < MAX_THREAD; i++) {
