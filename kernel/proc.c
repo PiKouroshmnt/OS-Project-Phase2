@@ -173,6 +173,10 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->current_thread = 0;
+  for(int i = 0;i < MAX_THREAD;i++) {
+      p->threads[i].state = THREAD_FREE;
+  }
   p->state = UNUSED;
 }
 
@@ -472,11 +476,14 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        //if process has created threads...
         if(p->current_thread != 0) {
             if(p->current_thread->state == THREAD_RUNNABLE) {
                 t = p->current_thread;
             } else {
                 for(int i = 0; i < MAX_THREAD;i++) {
+                    //find first ready/runnable thread
                     int index = (p->last_scheduled_index + i) % MAX_THREAD;
                     t = &p->threads[index];
                     if (t->state == THREAD_RUNNABLE) {
@@ -495,7 +502,6 @@ scheduler(void)
             /*
              * trapframe of thread needs to be saved before context switch. not sure if this is the way to do it
              */
-
             memmove(p->trapframe,t->trapframe,sizeof (struct trapframe));
 
         }
@@ -841,8 +847,9 @@ thread_exit(void) {
 }
 
 int
-thread_create(void (*func)(void *) , void *arg)
+thread_create(void* (*func)(void *) , void *arg)
 {
+    intr_off();
     struct thread *t = 0;
     struct proc *p = myproc();
     uint64 stack_top;
@@ -857,6 +864,7 @@ thread_create(void (*func)(void *) , void *arg)
         main_thread->join = 0;
         main_thread->trapframe = (struct trapframe *)kalloc();
         if (!main_thread->trapframe) {
+            intr_on();
             panic("trapframe alloc failed: main");
             return -1;
         }
@@ -867,19 +875,21 @@ thread_create(void (*func)(void *) , void *arg)
 
     for(int i = 0 ;i < MAX_THREAD; i++) {
         if (p->threads[i].state == THREAD_FREE) {
-            nexttid = p->threads[i-1].id;
+            nexttid = p->threads[i-1].id + 1;
             t = &p->threads[i];
             break;
         }
     }
 
     if(t == 0) {
+        intr_on();
         panic("max threads reached");
         return -1;
     }
 
     stack_top = uvmalloc(p->pagetable, p->sz,p->sz + STACKSIZE, PTE_U | PTE_W);
     if (stack_top == 0) {
+        intr_on();
         panic("stack alloc failed");
         return -1;
     }
@@ -891,6 +901,7 @@ thread_create(void (*func)(void *) , void *arg)
 
     t->trapframe = (struct trapframe *) kalloc();
     if(!t->trapframe) {
+        intr_on();
         panic("trapframe alloc failed: t");
         return -1;
     }
@@ -901,5 +912,6 @@ thread_create(void (*func)(void *) , void *arg)
     t->trapframe->sp = stack_top;
     t->trapframe->ra = (uint64)thread_exit;
 
+    intr_on();
     return t->id;
 }

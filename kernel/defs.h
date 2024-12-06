@@ -115,7 +115,7 @@ void            procdump(void);
 void            find_children(struct child_processes *chp, struct proc *parent);
 int             get_reports(struct report_traps *rprt);
 void            thread_exit(void);
-int             thread_create(void (*func)(void *) , void *arg);
+int             thread_create(void* (*func)(void *) , void *arg);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

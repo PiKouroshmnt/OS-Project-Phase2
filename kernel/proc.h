@@ -117,7 +117,7 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 
-  //threads
+  //threads in proc struct..
   struct thread threads[MAX_THREAD];
   struct thread *current_thread;
   int last_scheduled_index;

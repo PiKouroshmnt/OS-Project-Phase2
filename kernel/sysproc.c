@@ -125,11 +125,11 @@ report_traps(void)
 uint64
 sys_create_thread(void)
 {
-    void (*func)(void *);
+    void* (*func)(void *);
     void *arg;
 
-    argint(0,(int *)&func);
-    argint(1,(int *)&arg);
+    argaddr(0, (uint64 *)&func);
+    argaddr(1,(uint64 *)&arg);
 
     return thread_create(func,arg);
 }
