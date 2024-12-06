@@ -125,8 +125,15 @@ report_traps(void)
 uint64
 sys_create_thread(void)
 {
-    //body
-    return 0; //this line must change as well
+    void (*func)(void *);
+    void *arg;
+
+    if (argint(0, (int *)&func) < 0 || argint(1, (int*)&arg) < 0){
+        panic("args failed");
+        return -1;
+    }
+
+    return thread_create(func,arg);
 }
 
 uint64

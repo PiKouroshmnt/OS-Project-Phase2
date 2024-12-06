@@ -91,7 +91,7 @@ struct thread {
     uint join;
 };
 
-enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE, TEXIT };
 
 // Per-process state
 struct proc {

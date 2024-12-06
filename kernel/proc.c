@@ -55,6 +55,9 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->state = UNUSED;
       p->current_thread = 0;
+      for(int i = 0;i < MAX_THREAD;i++) {
+          p->threads[i].state = THREAD_FREE;
+      }
       p->kstack = KSTACK((int) (p - proc));
   }
 }
@@ -750,4 +753,100 @@ get_reports(struct report_traps *rprt)
         }
     }
     return 0;
+}
+
+void
+thread_exit(void) {
+    struct proc *p = myproc();
+    struct thread *t = p->current_thread;
+
+    acquire(&p->lock);
+
+    t->state = T_JOINED;
+
+    if (t->trapframe) {
+        uvmdealloc(p->pagetable, (uint64)t->trapframe->sp, (uint64)(t->trapframe->sp - STACKSIZE));
+        kfree((void *)t->trapframe);
+        t->trapframe = 0;
+    }
+
+    int threads_active = 0;
+    for (int i = 0; i < MAX_THREADS; i++) {
+        if (p->threads[i].state != T_FREE && p->threads[i].state != T_JOINED) {
+            threads_active = 1;
+            break;
+        }
+    }
+    if (!threads_active) {
+        p->state = ZOMBIE;
+        wakeup(p->parent);
+    }
+
+    p->state = TEXIT;
+    sched();
+    panic("dont know what to do here");
+}
+
+int
+thread_create(void (*func)(void *) , void *arg)
+{
+    struct thread *t = 0;
+    struct proc *p = myproc();
+    uint64 *stack_top;
+    uint nexttid = 0;
+
+    if (p->current_thread == 0) {
+        p->current_thread = &p->threads[0];
+        struct thread *main_thread = p->current_thread;
+
+        main_thread->state = THREAD_RUNNABLE;
+        main_thread->id = 0;
+        main_thread->join = 0;
+        main_thread->trapframe = (struct trapframe *)kalloc();
+        if (!main_thread->trapframe) {
+            panic("trapframe alloc failed: main");
+            return -1;
+        }
+
+        memmove(main_thread->trapframe, p->trapframe, sizeof(struct trapframe));
+        main_thread->tf->sp = p->trapframe->sp;
+    }
+
+    for(int i = 0 ;i < MAX_THREAD; i++) {
+        if (p->threads[i].state == THREAD_FREE) {
+            nexttid = p->threads[i-1].id;
+            t = &p->threads[i];
+            break;
+        }
+    }
+
+    if(t == 0) {
+        panic("max threads reached");
+        return -1;
+    }
+
+    stack_top = uvmalloc(p->pagetable, p->sz,p->sz + STACKSIZE, PTE_U | PTE_W);
+    if (stack_top == 0) {
+        panic("stack alloc failed");
+        return -1;
+    }
+    p->sz += STACKSIZE;
+
+    t->state = THREAD_RUNNABLE;
+    t->id = nexttid;
+    t->join = 0;
+
+    t->trapframe = (struct trapframe *) kalloc();
+    if(!t->trapframe) {
+        panic("trapframe alloc failed: t");
+        return -1;
+    }
+
+    memmove(t->trapframe, p->trapframe, sizeof (struct trapframe));
+    t->trapframe->epc = (uint64)func;
+    t->trapframe->a0 = (uint64)arg;
+    t->trapframe->sp = stack_top;
+    t->trapframe->ra = (uint64)thread_exit;
+
+    return t->id;
 }
