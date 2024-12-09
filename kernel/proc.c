@@ -55,6 +55,10 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->state = UNUSED;
       p->current_thread = 0;
+      p->last_scheduled_index = 0;
+      for(int i = 0;i < MAX_THREAD;i++) {
+          p->threads[i].state = THREAD_FREE;
+      }
       p->kstack = KSTACK((int) (p - proc));
   }
 }
@@ -169,6 +173,10 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->current_thread = 0;
+  for(int i = 0;i < MAX_THREAD;i++) {
+      p->threads[i].state = THREAD_FREE;
+  }
   p->state = UNUSED;
 }
 
@@ -380,6 +388,8 @@ exit(int status)
 
   p->xstate = status;
   p->state = ZOMBIE;
+  if(p->current_thread)
+    p->current_thread->state = THREAD_JOINED;
 
   release(&wait_lock);
 
@@ -448,6 +458,8 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct thread *t = 0;
+  int flag = 0;
   struct cpu *c = mycpu();
 
   c->proc = 0;
@@ -466,7 +478,42 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        //if process has created threads...
+        if(p->current_thread != 0) {
+            for(int i = 0; i < MAX_THREAD;i++) {
+                //find first ready/runnable thread
+                int index = (p->last_scheduled_index + 1 + i) % MAX_THREAD;
+                t = &p->threads[index];
+                if (t->state == THREAD_RUNNABLE && t->join == 0) {
+                    p->current_thread = t;
+                    p->last_scheduled_index = index;
+                    break;
+                }
+            }
+            if(t && t->state == THREAD_RUNNABLE) {
+                t->state = THREAD_RUNNING;
+            }else {
+                panic("this shouldn't happen but just in case");
+            }
+
+            memmove(p->trapframe,t->trapframe,sizeof (struct trapframe));
+
+            //this is debug only serves no purpose
+            //printf("\n");
+        }
+
         swtch(&c->context, &p->context);
+
+        if(p->current_thread && p->current_thread->state == THREAD_RUNNABLE){
+            t = 0;
+            memmove(p->current_thread->trapframe,p->trapframe,sizeof (struct trapframe));
+
+        }
+        if(p->state == TEXIT) {
+            flag = 1;
+            p->state = RUNNABLE;
+        }
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
@@ -474,6 +521,10 @@ scheduler(void)
         found = 1;
       }
       release(&p->lock);
+      if(flag) {
+          p--;
+          flag = 0;
+      }
     }
     if(found == 0) {
       // nothing to run; stop running on this core until an interrupt.
@@ -500,7 +551,7 @@ sched(void)
     panic("sched p->lock");
   if(mycpu()->noff != 1)
     panic("sched locks");
-  if(p->state == RUNNING)
+  if(p->state == RUNNING || (p->current_thread && p->current_thread->state == THREAD_RUNNING))
     panic("sched running");
   if(intr_get())
     panic("sched interruptible");
@@ -517,6 +568,9 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  if(p->current_thread && p->current_thread->state == THREAD_RUNNING) {
+      p->current_thread->state = THREAD_RUNNABLE;
+  }
   sched();
   release(&p->lock);
 }
@@ -750,4 +804,113 @@ get_reports(struct report_traps *rprt)
         }
     }
     return 0;
+}
+
+void
+thread_exit(void) {
+    struct proc *p = myproc();
+    struct thread *t = p->current_thread;
+
+    acquire(&p->lock);
+
+    //might change this as well later not sure if this is how to do it
+    //save return val into process trapframe:
+
+    t->state = THREAD_JOINED;
+
+    for(int i = 0; i < MAX_THREAD; i++) {
+        if(p->threads[i].id != t->id && p->threads[i].join == t->id) {
+            p->threads[i].join = 0;
+        }
+    }
+
+    if (t->trapframe) {
+        uvmdealloc(p->pagetable, (uint64)t->trapframe->sp, (uint64)(t->trapframe->sp - STACKSIZE));
+        p->sz -= STACKSIZE;
+        kfree((void *)t->trapframe);
+        t->trapframe = 0;
+    }
+
+    int threads_active = (p->threads[0].state == THREAD_JOINED) ? 0 : 1;
+
+    if (!threads_active) {
+        p->state = ZOMBIE;
+        release(&p->lock);
+        wakeup(p->parent);
+    }
+
+    p->state = TEXIT;
+    sched();
+    release(&p->lock);
+}
+
+int
+thread_create(void* (*func)(void *) , void *arg)
+{
+    struct thread *t = 0;
+    struct proc *p = myproc();
+    uint64 stack_top;
+    uint nexttid = 0;
+
+    if (p->current_thread == 0) {
+        p->current_thread = &p->threads[0];
+        struct thread *main_thread = p->current_thread;
+
+        main_thread->state = THREAD_RUNNABLE;
+        main_thread->id = 0;
+        main_thread->join = 0;
+        main_thread->trapframe = (struct trapframe *)kalloc();
+        if (!main_thread->trapframe) {
+            intr_on();
+            panic("trapframe alloc failed: main");
+            return -1;
+        }
+
+        memmove(main_thread->trapframe, p->trapframe, sizeof(struct trapframe));
+        main_thread->trapframe->sp = p->trapframe->sp;
+    }
+
+    for(int i = 0 ;i < MAX_THREAD; i++) {
+        if (p->threads[i].state == THREAD_FREE) {
+            nexttid = p->threads[i-1].id + 1;
+            t = &p->threads[i];
+            break;
+        }
+    }
+
+    if(t == 0) {
+        intr_on();
+        panic("max threads reached");
+        return -1;
+    }
+
+    stack_top = uvmalloc(p->pagetable, p->sz,p->sz + STACKSIZE, PTE_U | PTE_W);
+    if (stack_top == 0) {
+        intr_on();
+        panic("stack alloc failed");
+        return -1;
+    }
+    p->sz += STACKSIZE;
+
+    t->join = nexttid;
+    t->state = THREAD_RUNNABLE;
+    t->id = nexttid;
+
+
+    t->trapframe = (struct trapframe *) kalloc();
+    if(!t->trapframe) {
+        intr_on();
+        panic("trapframe alloc failed: t");
+        return -1;
+    }
+
+    memmove(t->trapframe, p->trapframe, sizeof (struct trapframe));
+    t->trapframe->epc = (uint64)func;
+    t->trapframe->a0 = (uint64)arg;
+    t->trapframe->sp = stack_top;
+    t->trapframe->ra = (uint64)-1;
+
+    t->join = 0;
+
+    return t->id;
 }

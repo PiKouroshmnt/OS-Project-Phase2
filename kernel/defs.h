@@ -13,6 +13,7 @@ struct child_processes;
 struct report;
 struct global_data;
 struct report_traps;
+struct thread;
 
 // bio.c
 void            binit(void);
@@ -113,6 +114,8 @@ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 void            find_children(struct child_processes *chp, struct proc *parent);
 int             get_reports(struct report_traps *rprt);
+void            thread_exit(void);
+int             thread_create(void* (*func)(void *) , void *arg);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

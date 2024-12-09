@@ -48,6 +48,11 @@ usertrap(void)
 
   struct proc *p = myproc();
 
+  if(r_sepc() == -2) {
+      thread_exit();
+      usertrapret();
+  }
+
     if(p->pid >= 0){
         struct report *r = &internal_report_list.reports[internal_report_list.writeIndex];
         strncpy(r->pname,p->name,sizeof(r->pname));
@@ -83,6 +88,8 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+      printf("thread: %d\tepc: %lu\ta0: %lu\tsp: %lu\tra: %lu\n",p->current_thread->id,p->current_thread->trapframe->epc,p->current_thread->trapframe->a0,p->current_thread->trapframe->sp,p->current_thread->trapframe->ra);
+      printf("process: %d\tepc: %lu\ta0: %lu\tsp: %lu\tra: %lu\n",p->pid,p->trapframe->epc,p->trapframe->a0,p->trapframe->sp,p->trapframe->ra);
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
     setkilled(p);
@@ -110,10 +117,16 @@ usertrapret(void)
   // kerneltrap() to usertrap(), so turn off interrupts until
   // we're back in user space, where usertrap() is correct.
   intr_off();
-
   // send syscalls, interrupts, and exceptions to uservec in trampoline.S
   uint64 trampoline_uservec = TRAMPOLINE + (uservec - trampoline);
   w_stvec(trampoline_uservec);
+
+  //this fixes the wrongly mapped a0 for some reason...
+  //makes sense too. if the current thread we are switched to is not the main thread then the
+  //function arguments aka a0 shouldnt change!
+  //this code is here to make sure of that, meaning if it were to change, we just change it back :)
+  if(p->current_thread && p->current_thread->state == THREAD_RUNNING && p->current_thread->id != 0)
+    p->trapframe->a0 = p->current_thread->trapframe->a0;
 
   // set up trapframe values that uservec will need when
   // the process next traps into the kernel.
@@ -188,7 +201,7 @@ clockintr()
   // ask for the next timer interrupt. this also clears
   // the interrupt request. 1000000 is about a tenth
   // of a second.
-  w_stimecmp(r_time() + 1000000);
+  w_stimecmp(r_time() + 10000000);
 }
 
 // check if it's an external interrupt or software interrupt,

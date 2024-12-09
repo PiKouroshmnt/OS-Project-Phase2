@@ -125,14 +125,21 @@ report_traps(void)
 uint64
 sys_create_thread(void)
 {
-    //body
-    return 0; //this line must change as well
+    intr_off();
+    void* (*func)(void *);
+    void *arg;
+
+    argaddr(0, (uint64 *)&func);
+    argaddr(1,(uint64 *)&arg);
+
+    int ans = thread_create(func,arg);
+    intr_on();
+    return ans;
 }
 
 uint64
 sys_join_thread(void)
 {
-    //body
     return 0; //might change this as well
 }
 
@@ -142,4 +149,3 @@ sys_stop_thread(void)
     //body
     return 0; //might change this as well
 }
-
