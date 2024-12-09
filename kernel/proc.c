@@ -459,12 +459,8 @@ scheduler(void)
 {
   struct proc *p;
   struct thread *t = 0;
-  struct thread *current = 0;
   int flag = 0;
   struct cpu *c = mycpu();
-
-  //for debugging a strange problem i kept encountering
-  uint64 a0 = 0;
 
   c->proc = 0;
   for(;;){
@@ -490,7 +486,6 @@ scheduler(void)
                 int index = (p->last_scheduled_index + 1 + i) % MAX_THREAD;
                 t = &p->threads[index];
                 if (t->state == THREAD_RUNNABLE && t->join == 0) {
-                    current = p->current_thread;
                     p->current_thread = t;
                     p->last_scheduled_index = index;
                     break;
@@ -502,21 +497,18 @@ scheduler(void)
                 panic("this shouldn't happen but just in case");
             }
 
-            if(current->trapframe) {
-                a0 = current->trapframe->a0;
-                memmove(current->trapframe, p->trapframe, sizeof(struct trapframe));
-                if(current->id != 0)
-                    current->trapframe->a0 = a0;
-            }
             memmove(p->trapframe,t->trapframe,sizeof (struct trapframe));
+
+            //this is debug only serves no purpose
+            //printf("\n");
         }
 
         swtch(&c->context, &p->context);
 
-        if(t){
+        if(p->current_thread && p->current_thread->state == THREAD_RUNNABLE){
             t = 0;
-            current = 0;
-            a0 = 0;
+            memmove(p->current_thread->trapframe,p->trapframe,sizeof (struct trapframe));
+
         }
         if(p->state == TEXIT) {
             flag = 1;
