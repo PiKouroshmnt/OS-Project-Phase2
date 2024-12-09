@@ -388,6 +388,8 @@ exit(int status)
 
   p->xstate = status;
   p->state = ZOMBIE;
+  if(p->current_thread)
+    p->current_thread->state = THREAD_JOINED;
 
   release(&wait_lock);
 
@@ -457,8 +459,12 @@ scheduler(void)
 {
   struct proc *p;
   struct thread *t = 0;
+  struct thread *current = 0;
   int flag = 0;
   struct cpu *c = mycpu();
+
+  //for debugging a strange problem i kept encountering
+  uint64 a0 = 0;
 
   c->proc = 0;
   for(;;){
@@ -479,18 +485,15 @@ scheduler(void)
 
         //if process has created threads...
         if(p->current_thread != 0) {
-            if(p->current_thread->state == THREAD_RUNNABLE) {
-                t = p->current_thread;
-            } else {
-                for(int i = 0; i < MAX_THREAD;i++) {
-                    //find first ready/runnable thread
-                    int index = (p->last_scheduled_index + i) % MAX_THREAD;
-                    t = &p->threads[index];
-                    if (t->state == THREAD_RUNNABLE) {
-                        p->current_thread = t;
-                        p->last_scheduled_index = index;
-                        break;
-                    }
+            for(int i = 0; i < MAX_THREAD;i++) {
+                //find first ready/runnable thread
+                int index = (p->last_scheduled_index + 1 + i) % MAX_THREAD;
+                t = &p->threads[index];
+                if (t->state == THREAD_RUNNABLE && t->join == 0) {
+                    current = p->current_thread;
+                    p->current_thread = t;
+                    p->last_scheduled_index = index;
+                    break;
                 }
             }
             if(t && t->state == THREAD_RUNNABLE) {
@@ -499,20 +502,21 @@ scheduler(void)
                 panic("this shouldn't happen but just in case");
             }
 
-            /*
-             * trapframe of thread needs to be saved before context switch. not sure if this is the way to do it
-             */
+            if(current->trapframe) {
+                a0 = current->trapframe->a0;
+                memmove(current->trapframe, p->trapframe, sizeof(struct trapframe));
+                if(current->id != 0)
+                    current->trapframe->a0 = a0;
+            }
             memmove(p->trapframe,t->trapframe,sizeof (struct trapframe));
-
         }
 
         swtch(&c->context, &p->context);
 
         if(t){
-            /*
-             * might need to unload thread trapframe. for now I'll keep it empty
-             */
             t = 0;
+            current = 0;
+            a0 = 0;
         }
         if(p->state == TEXIT) {
             flag = 1;
@@ -819,37 +823,38 @@ thread_exit(void) {
 
     //might change this as well later not sure if this is how to do it
     //save return val into process trapframe:
-    p->trapframe->a0 = t->trapframe->a0;
 
     t->state = THREAD_JOINED;
 
+    for(int i = 0; i < MAX_THREAD; i++) {
+        if(p->threads[i].id != t->id && p->threads[i].join == t->id) {
+            p->threads[i].join = 0;
+        }
+    }
+
     if (t->trapframe) {
         uvmdealloc(p->pagetable, (uint64)t->trapframe->sp, (uint64)(t->trapframe->sp - STACKSIZE));
+        p->sz -= STACKSIZE;
         kfree((void *)t->trapframe);
         t->trapframe = 0;
     }
 
-    int threads_active = 0;
-    for (int i = 0; i < MAX_THREAD; i++) {
-        if (p->threads[i].state != THREAD_FREE && p->threads[i].state != THREAD_JOINED) {
-            threads_active = 1;
-            break;
-        }
-    }
+    int threads_active = (p->threads[0].state == THREAD_JOINED) ? 0 : 1;
+
     if (!threads_active) {
         p->state = ZOMBIE;
+        release(&p->lock);
         wakeup(p->parent);
     }
 
     p->state = TEXIT;
     sched();
-    panic("dont know what to do here");
+    release(&p->lock);
 }
 
 int
 thread_create(void* (*func)(void *) , void *arg)
 {
-    intr_off();
     struct thread *t = 0;
     struct proc *p = myproc();
     uint64 stack_top;
@@ -895,9 +900,10 @@ thread_create(void* (*func)(void *) , void *arg)
     }
     p->sz += STACKSIZE;
 
+    t->join = nexttid;
     t->state = THREAD_RUNNABLE;
     t->id = nexttid;
-    t->join = 0;
+
 
     t->trapframe = (struct trapframe *) kalloc();
     if(!t->trapframe) {
@@ -910,8 +916,9 @@ thread_create(void* (*func)(void *) , void *arg)
     t->trapframe->epc = (uint64)func;
     t->trapframe->a0 = (uint64)arg;
     t->trapframe->sp = stack_top;
-    t->trapframe->ra = (uint64)thread_exit;
+    t->trapframe->ra = (uint64)-1;
 
-    intr_on();
+    t->join = 0;
+
     return t->id;
 }
