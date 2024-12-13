@@ -140,12 +140,23 @@ sys_create_thread(void)
 uint64
 sys_join_thread(void)
 {
-    return 0; //might change this as well
+  uint thread_id;
+
+  argaddr(0, (uint64 *)&thread_id);
+
+  int err = thread_join(thread_id);
+  return err;
 }
 
 uint64
 sys_stop_thread(void)
 {
-    //body
-    return 0; //might change this as well
+  intr_off();
+  uint thread_id;
+
+  argaddr(0, (uint64 *)&thread_id);
+
+  int err = thread_stop(thread_id);
+  intr_on();
+  return err;
 }

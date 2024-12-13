@@ -914,3 +914,65 @@ thread_create(void* (*func)(void *) , void *arg)
 
     return t->id;
 }
+
+int
+thread_join(int tid)
+{
+  struct proc *p = myproc();
+  struct thread *t = 0;
+
+  acquire(&p->lock);
+
+  // find thread with thread_id
+  for(int i = 0; i < MAX_THREAD; i++) {
+    if(p->threads[i].id == tid){
+      t = &p->threads[i];
+      break;
+    }
+  }
+
+  // there isn't any thread with this id
+  if(t == 0) {
+    release(&p->lock);
+    return -1;
+  }
+
+  if(t->state == THREAD_FREE || t->state == THREAD_JOINED) {
+    release(&p->lock);
+    return 0;
+  }
+
+  p->current_thread->join = tid;
+  p->current_thread->state = THREAD_RUNNABLE;
+  p->state = RUNNABLE;
+  sched();
+  release(&p->lock);
+  return 0;
+}
+
+int
+thread_stop(int tid){
+  struct proc *p = myproc();
+  struct thread *t = p->current_thread;
+
+  if(tid == -1) {
+    thread_exit();
+  }
+
+  // find thread whit thread_id
+  for(int i = 0; i < MAX_THREAD; i++) {
+    if(p->threads[i].id == tid){
+      t = &p->threads[i];
+      break;
+    }
+  }
+
+  if (t == 0) {
+    return -1;
+  }
+
+  t->state = THREAD_JOINED;
+  thread_exit();
+
+  return 0;
+}
